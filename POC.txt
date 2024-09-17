@@ -1,0 +1,157 @@
+Proof of Concept (PoC) for AI Chatbot
+Record Audio: The chatbot starts recording when prompted by the user.
+Transcribe Audio to Text: The recorded audio is sent to the Groq API for transcription.
+Generate Response: The transcribed text is processed using the language model, and a response is generated.
+Text-to-Speech (TTS): The response is spoken out using a TTS engine.
+Prerequisites:
+Make sure you have the required libraries installed:
+pip install pyaudio pyttsx3 pynput groqapi langchain_core langchain_groq
+PoC Code:
+
+import os
+import wave
+import pyaudio
+import pyttsx3
+from pynput import keyboard
+from groq import Groq
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_groq import ChatGroq
+
+# Initialize the Groq client (replace with your API key)
+GROQ_API_KEY = "your_groq_api_key"
+client = Groq(api_key=GROQ_API_KEY)
+
+# Chat Groq model
+model = ChatGroq(temperature=0, groq_api_key=GROQ_API_KEY, model_name="llama-3.1-70b-versatile")
+
+# Initialize the TTS engine
+engine = pyttsx3.init()
+
+# Set the speech rate
+engine.setProperty('rate', 150)  # Adjust the speech speed
+
+# Define recording parameters
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+
+recording = False
+frames = []
+
+def on_press(key):
+    """Stop recording when Enter or Esc is pressed."""
+    global recording
+    if key == keyboard.Key.enter or key == keyboard.Key.esc:
+        recording = False
+        return False
+
+def record_audio():
+    """Record audio from the microphone."""
+    global recording, frames
+    frames = []  # Reset frames
+    recording = True
+
+    p = pyaudio.PyAudio()
+    stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+
+    print("Recording... Press 'Enter' or 'Esc' to stop.")
+
+    while recording:
+        data = stream.read(CHUNK)
+        frames.append(data)
+
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+def save_audio():
+    """Save the recorded audio to a file."""
+    filename = 'audio.wav'
+    wf = wave.open(filename, 'wb')
+    wf.setnchannels(CHANNELS)
+    wf.setsampwidth(pyaudio.PyAudio().get_sample_size(FORMAT))
+    wf.setframerate(RATE)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+
+    print(f"Audio saved as: {filename}")
+    return filename
+
+def transcribe_audio(audio_file):
+    """Transcribe the audio using Groq API."""
+    try:
+        with open(audio_file, 'rb') as f:
+            transcription = client.audio.transcriptions.create(
+                file=f,
+                model="distil-whisper-large-v3-en",
+                response_format="json",
+                language="en"
+            )
+        return transcription.text
+    except Groq.APIError as e:
+        print(f"Groq API Error: {e}")
+        return ""
+
+template = """
+Answer the question below. Here is the conversation history: {context} Question: {question} Answer:
+"""
+prompt = ChatPromptTemplate.from_template(template)
+chain = prompt | model
+
+def process_with_model(user_input, context=""):
+    """Get response from the LLM model."""
+    result = chain.invoke({"context": context, "question": user_input})
+    print("Bot:", result.content)
+    new_context = f"{context}\nUser: {user_input}\nAI: {result.content}"
+    return result.content, new_context
+
+def handle_conversation():
+    """Main function to manage the conversation flow."""
+    context = ""
+
+    while True:
+        # Start recording
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+        record_audio()
+        listener.join()
+
+        # Save audio and transcribe
+        saved_audio = save_audio()
+        user_input = transcribe_audio(saved_audio)
+
+        if user_input.strip():
+            response, context = process_with_model(user_input, context)
+
+            # Speak the response
+            engine.say(response)
+            engine.runAndWait()
+
+if __name__ == "__main__":
+    print("Welcome to the AI chatbot!")
+    handle_conversation()
+
+Key Components of the PoC
+Audio Recording: 
+The PoC records audio input from the microphone until the user presses Enter or Esc.
+Transcription:
+It sends the recorded audio to the Groq API, which converts the audio into text.
+Language Model Response: 
+The transcribed text is processed by a language model (llama-3.1-70b-versatile) via the Groq API to generate a response.
+Text-to-Speech: 
+The response is converted into speech using the pyttsx3 library.
+Example Conversation Flow:
+Bot: Welcome to the AI chatbot!
+Recording... Press 'Enter' or 'Esc' to stop.
+(You record your voice asking: "What is the weather today?")
+Bot: The weather is currently sunny with temperatures around 25 degrees.
+Limitations
+Simplified Transcription and Response: This PoC focuses on demonstrating the basic interaction without complex error handling or additional features like emotion-driven storytelling.
+Hardcoded API Key: Ensure you replace the placeholder GROQ_API_KEY with your actual API key from Groq.
+Future Enhancements
+Error Handling: Add proper error handling for network failures or incorrect transcription results.
+User-Friendly Interface: Enhance the PoC with a GUI or web interface.
+Advanced Conversation Features: Incorporate multi-turn conversations and emotion-based responses.
+
+
